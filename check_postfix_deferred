@@ -1,0 +1,138 @@
+#! /bin/bash
+#
+# Plugin to check the deferred queue size of a remote postfix box.
+#
+# Usage: ./check_postfix_deferred -H <hostname> -u <user> [-w <n_warn>] [-c <n_crit>]
+#
+# Description:
+#
+# This script checks the size of a remote postfix box, by connecting through
+# ssh (using the given username) and counting the number of files within
+# the /var/spool/postfix/deferred folder.
+#
+# Output:
+#
+# This plugin will return either "OK. <count> deferred mails." if the number
+# of deferred mails is lower than n_warn. It will return "WARN. <count> deferred
+# mails." if the count surpasses n_warn but does not reach n_crit. Finally,
+# it returns a CRITICAL state whenever the count surpasses n_crit.
+#
+# By default n_warn is 20 and n_crit is 50.
+
+# Paths to commands used in this script.  These
+# may have to be modified to match your system setup.
+ECHO="/bin/echo"
+GREP="/bin/egrep"
+BASENAME="/usr/bin/basename"
+SSH="/usr/bin/ssh"
+
+# Defaults
+WARN=20
+CRIT=50
+
+PROGNAME=`$BASENAME $0`
+PROGPATH=`$ECHO $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
+REVISION=`$ECHO '$Revision: 1$' | sed -e 's/[^0-9.]//g'`
+
+if [ ! -f $PROGPATH/utils.sh ]; then
+    echo "Error: this script must be placed inside nagios plugins folder"
+    exit 1
+fi
+. $PROGPATH/utils.sh
+
+print_usage() {
+    echo "Usage: $PROGNAME -H <hostname> -u <user> [-w <n_warn>] [-c <n_crit>]"
+    echo "Usage: $PROGNAME --help"
+    echo "Usage: $PROGNAME --version"
+}
+
+print_help() {
+    print_revision $PROGNAME $REVISION
+    echo ""
+    print_usage
+    echo ""
+    support
+}
+
+# Make sure the correct number of command line
+# arguments have been supplied
+
+if [ $# -lt 1 ]; then
+    print_usage
+    exit $STATE_UNKNOWN
+fi
+
+# Parse command line arguments
+
+exitstatus=$STATE_WARNING #default
+while test -n "$1"; do
+    case "$1" in
+        -c | --crit)
+            CRIT=$2
+            shift
+            case "$CRIT" in
+                ''|*[!0-9]*)
+                    echo "Error: invalid critical threshold \"$CRIT\""
+                    exit $STATE_UNKNOWN
+                    ;;
+            esac
+            ;;
+        -h | --help)
+            print_help
+            exit $STATE_OK
+            ;;
+        -V | --version)
+            print_revision $PROGNAME $REVISION
+            exit $STATE_OK
+            ;;
+        -H | --hostname)
+            RHOST=$2
+            shift
+            ;;
+        -u | --user)
+            RUSER=$2
+            shift
+            ;;
+        -w | --warn)
+            WARN=$2
+            shift
+            case "$WARN" in
+                ''|*[!0-9]*)
+                    echo "Error: invalid warning threshold \"$WARN\""
+                    exit $STATE_UNKNOWN
+                    ;;
+            esac
+            ;;
+        -x | --exitstatus)
+            exitstatus=$2
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            print_usage
+            exit $STATE_UNKNOWN
+            ;;
+    esac
+    shift
+done
+
+if [ -z "$RUSER" ] || [ -z "$RHOST" ]; then
+    echo "Error: you must specify the remote hostname and user"
+    exit $STATE_UNKNOWN
+fi
+
+# Perform the (remote) check
+COUNT=$(ssh $RUSER@$RHOST 'sudo find /var/spool/postfix/deferred -type f | wc -l') || exit $STATE_UNKNOWN
+if (( COUNT >= CRIT )); then
+    echo -en "CRIT. "
+    exitstatus=$STATE_CRITICAL
+elif (( COUNT >= WARN )); then
+    echo -en "WARN. "
+    exitstatus=$STATE_WARNING
+else
+    echo -en "OK. "
+    exitstatus=$STATE_OK
+fi
+echo "$COUNT mails in the deferred queue."
+
+exit $exitstatus
